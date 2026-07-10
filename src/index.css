@@ -1,0 +1,76 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #0B0F19;
+    --bg-surface: #111827;
+    --bg-surface-elevated: #1A2332;
+    --bg-surface-highlight: #1E2D42;
+    --bg-border: #1F2937;
+    --bg-border-active: #374151;
+
+    --text-primary: #F1F5F9;
+    --text-secondary: #94A3B8;
+    --text-muted: #64748B;
+    --text-inverse: #0B0F19;
+
+    --success: #10B981;
+    --warning: #F59E0B;
+    --danger: #EF4444;
+    --info: #3B82F6;
+
+    --background: 222 47% 7%;
+    --foreground: 210 40% 96%;
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 210 40% 96%;
+    --primary-foreground: 222 47% 7%;
+    --secondary: 217 19% 15%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 19% 15%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 217 19% 15%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 96%;
+    --border: 220 13% 16%;
+    --input: 220 13% 16%;
+    --ring: 215 16% 47%;
+    --radius: 0.625rem;
+  }
+
+  body {
+    @apply bg-[#0B0F19] text-[#F1F5F9];
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    @apply border-[#1F2937];
+  }
+}
+
+/* Scrollbar styling for dark theme */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0B0F19;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #374151;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4B5563;
+  }
+}

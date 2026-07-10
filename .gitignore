@@ -1,0 +1,12 @@
+node_modules
+dist
+.DS_Store
+*.bak
+
+# IDE
+.idea
+.vscode
+
+# Test / local data files
+test-upload.xlsx
+S2605-0050_良率统计汇总表.xlsx
