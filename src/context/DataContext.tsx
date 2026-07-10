@@ -722,18 +722,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
             const totalTime = dayRecs.reduce((s, r) => s + r.duration, 0);
             const totalPieces = dayRecs.reduce((s, r) => s + r.pieces, 0);
 
-            // Calculate gaps per station, merging overlapping runs so parallel
-            // slots on the same station don't produce false overlaps/negative gaps.
+            // Calculate equipment-level gaps: a gap only exists when no station
+            // has any running process. Merge all day-bound segments across every
+            // station, then measure the uncovered intervals.
             const daySegments = allTimeSegments.filter(r => r.equipment === eq && r.date === date);
-            const stations = [...new Set(daySegments.map(r => r.station))];
+            const merged = mergeStationIntervals(daySegments);
             let totalGap = 0;
-            for (const station of stations) {
-              const stationSegments = daySegments.filter(r => r.station === station);
-              const merged = mergeStationIntervals(stationSegments);
-              for (let i = 0; i < merged.length - 1; i++) {
-                const gap = (merged[i + 1].startHour - merged[i].endHour) * 60;
-                if (gap > 0) totalGap += gap;
-              }
+            for (let i = 0; i < merged.length - 1; i++) {
+              const gap = (merged[i + 1].startHour - merged[i].endHour) * 60;
+              if (gap > 0) totalGap += gap;
             }
 
             overview.push({
@@ -805,29 +802,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
             }
             hourlyDist[date] = hourly;
 
-            // Gaps per station, merging overlapping runs on the same station
-            // so parallel slots don't create false overlaps or negative gaps.
-            const dayStations = [...new Set(daySegments.map(r => r.station))];
+            // Equipment-level gaps: merge all day-bound segments across every
+            // station, then the uncovered intervals are true idle windows.
+            const merged = mergeStationIntervals(daySegments);
             const dayGaps: any[] = [];
-            for (const station of dayStations) {
-              const stationSegments = daySegments.filter(r => r.station === station);
-              const merged = mergeStationIntervals(stationSegments);
-              for (let i = 0; i < merged.length - 1; i++) {
-                const gapMin = (merged[i + 1].startHour - merged[i].endHour) * 60;
-                if (gapMin > 0) {
-                  let cat = '>60min';
-                  if (gapMin <= 10) cat = '\u226410min';
-                  else if (gapMin <= 30) cat = '10~30min';
-                  else if (gapMin <= 60) cat = '30~60min';
-                  dayGaps.push({
-                    start: merged[i].endTime,
-                    end: merged[i + 1].startTime,
-                    duration: Math.round(gapMin),
-                    category: cat,
-                    station,
-                  });
-                  gapDetails.push({ date, start: merged[i].endTime, end: merged[i + 1].startTime, duration: Math.round(gapMin), category: cat, station });
-                }
+            for (let i = 0; i < merged.length - 1; i++) {
+              const gapMin = (merged[i + 1].startHour - merged[i].endHour) * 60;
+              if (gapMin > 0) {
+                let cat = '>60min';
+                if (gapMin <= 10) cat = '\u226410min';
+                else if (gapMin <= 30) cat = '10~30min';
+                else if (gapMin <= 60) cat = '30~60min';
+                dayGaps.push({
+                  start: merged[i].endTime,
+                  end: merged[i + 1].startTime,
+                  duration: Math.round(gapMin),
+                  category: cat,
+                });
+                gapDetails.push({ date, start: merged[i].endTime, end: merged[i + 1].startTime, duration: Math.round(gapMin), category: cat });
               }
             }
             gaps[date] = dayGaps;
