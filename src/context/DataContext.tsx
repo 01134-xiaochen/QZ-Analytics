@@ -607,8 +607,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
             const startHour = timeToDecimal(startStr);
             let endHour = timeToDecimal(endStr);
 
-            // Handle overnight (end < start)
-            if (endHour < startHour && endHour > 0) {
+            // Handle overnight (end < start). Shifts ending at 00:00 mean
+            // next-day midnight, so endHour === 0 must also be treated as
+            // crossing midnight.
+            if (endHour < startHour) {
               endHour += 24;
             }
 
