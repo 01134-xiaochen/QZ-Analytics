@@ -546,6 +546,46 @@ export function DataProvider({ children }: { children: ReactNode }) {
           return result;
         }
 
+        /**
+         * Merge overlapping or contiguous time segments on the same station.
+         * A station may run multiple slots/work orders in parallel; gaps should
+         * only be counted when the station has no running process at all.
+         */
+        function mergeStationIntervals(segments: ParsedRecord[]): Array<{
+          startHour: number;
+          endHour: number;
+          startTime: string;
+          endTime: string;
+          station: string;
+        }> {
+          if (segments.length === 0) return [];
+          const sorted = [...segments].sort((a, b) => a.startHour - b.startHour);
+          const merged: Array<{
+            startHour: number;
+            endHour: number;
+            startTime: string;
+            endTime: string;
+            station: string;
+          }> = [];
+          let current = { ...sorted[0] };
+
+          for (let i = 1; i < sorted.length; i++) {
+            const s = sorted[i];
+            if (s.startHour <= current.endHour) {
+              // Overlap or contiguous: extend the current interval if needed
+              if (s.endHour > current.endHour) {
+                current.endHour = s.endHour;
+                current.endTime = s.endTime;
+              }
+            } else {
+              merged.push(current);
+              current = { ...s };
+            }
+          }
+          merged.push(current);
+          return merged;
+        }
+
         for (const eq of equipmentTypes) {
           const sheetName = Object.keys(allSheets).find(k => k === eq || k.toUpperCase().includes(eq)) || eq;
           const rows = allSheets[sheetName];
@@ -589,19 +629,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
               }
             }
 
-            // Parse times
-            const startStr = colIdx.startTime !== undefined ? String(row[colIdx.startTime] || '') : '';
-            const endStr = colIdx.endTime !== undefined ? String(row[colIdx.endTime] || '') : '';
+            // Parse times. Some Excel files use Chinese colon '：', normalize first.
+            const normalizeTime = (t: string): string => String(t || '').trim().replace(/[：]/g, ':');
+            const rawStartStr = colIdx.startTime !== undefined ? String(row[colIdx.startTime] || '') : '';
+            const rawEndStr = colIdx.endTime !== undefined ? String(row[colIdx.endTime] || '') : '';
+            const startStr = normalizeTime(rawStartStr);
+            const endStr = normalizeTime(rawEndStr);
 
             // Convert time to decimal hours
             const timeToDecimal = (t: string): number => {
-              if (!t) return 0;
+              const nt = normalizeTime(t);
+              if (!nt) return 0;
               // Handle "HH:MM" or "HH:MM:SS" or decimal
-              if (t.includes(':')) {
-                const parts = t.split(':');
-                return parseInt(parts[0]) + parseInt(parts[1]) / 60;
+              if (nt.includes(':')) {
+                const parts = nt.split(':');
+                return parseInt(parts[0], 10) + parseInt(parts[1], 10) / 60;
               }
-              return parseFloat(t) || 0;
+              return parseFloat(nt) || 0;
             };
 
             const startHour = timeToDecimal(startStr);
@@ -678,13 +722,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
             const totalTime = dayRecs.reduce((s, r) => s + r.duration, 0);
             const totalPieces = dayRecs.reduce((s, r) => s + r.pieces, 0);
 
-            // Calculate gaps from day-bound time segments (overnight records split)
+            // Calculate gaps per station, merging overlapping runs so parallel
+            // slots on the same station don't produce false overlaps/negative gaps.
             const daySegments = allTimeSegments.filter(r => r.equipment === eq && r.date === date);
-            const sortedRecs = [...daySegments].sort((a, b) => a.startHour - b.startHour);
+            const stations = [...new Set(daySegments.map(r => r.station))];
             let totalGap = 0;
-            for (let i = 0; i < sortedRecs.length - 1; i++) {
-              const gap = (sortedRecs[i + 1].startHour - sortedRecs[i].endHour) * 60;
-              if (gap > 0) totalGap += gap;
+            for (const station of stations) {
+              const stationSegments = daySegments.filter(r => r.station === station);
+              const merged = mergeStationIntervals(stationSegments);
+              for (let i = 0; i < merged.length - 1; i++) {
+                const gap = (merged[i + 1].startHour - merged[i].endHour) * 60;
+                if (gap > 0) totalGap += gap;
+              }
             }
 
             overview.push({
@@ -756,24 +805,29 @@ export function DataProvider({ children }: { children: ReactNode }) {
             }
             hourlyDist[date] = hourly;
 
-            // Gaps (use day-bound segments so an overnight run ending at 01:00
-            // produces a gap from 01:00, not from 00:00)
-            const sorted = [...daySegments].sort((a, b) => a.startHour - b.startHour);
+            // Gaps per station, merging overlapping runs on the same station
+            // so parallel slots don't create false overlaps or negative gaps.
+            const dayStations = [...new Set(daySegments.map(r => r.station))];
             const dayGaps: any[] = [];
-            for (let i = 0; i < sorted.length - 1; i++) {
-              const gapMin = (sorted[i + 1].startHour - sorted[i].endHour) * 60;
-              if (gapMin > 0) {
-                let cat = '>60min';
-                if (gapMin <= 10) cat = '\u226410min';
-                else if (gapMin <= 30) cat = '10~30min';
-                else if (gapMin <= 60) cat = '30~60min';
-                dayGaps.push({
-                  start: sorted[i].endTime,
-                  end: sorted[i + 1].startTime,
-                  duration: Math.round(gapMin),
-                  category: cat,
-                });
-                gapDetails.push({ date, start: sorted[i].endTime, end: sorted[i + 1].startTime, duration: Math.round(gapMin), category: cat });
+            for (const station of dayStations) {
+              const stationSegments = daySegments.filter(r => r.station === station);
+              const merged = mergeStationIntervals(stationSegments);
+              for (let i = 0; i < merged.length - 1; i++) {
+                const gapMin = (merged[i + 1].startHour - merged[i].endHour) * 60;
+                if (gapMin > 0) {
+                  let cat = '>60min';
+                  if (gapMin <= 10) cat = '\u226410min';
+                  else if (gapMin <= 30) cat = '10~30min';
+                  else if (gapMin <= 60) cat = '30~60min';
+                  dayGaps.push({
+                    start: merged[i].endTime,
+                    end: merged[i + 1].startTime,
+                    duration: Math.round(gapMin),
+                    category: cat,
+                    station,
+                  });
+                  gapDetails.push({ date, start: merged[i].endTime, end: merged[i + 1].startTime, duration: Math.round(gapMin), category: cat, station });
+                }
               }
             }
             gaps[date] = dayGaps;
