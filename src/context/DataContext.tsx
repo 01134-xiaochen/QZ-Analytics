@@ -486,6 +486,66 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const allRecords: ParsedRecord[] = [];
         const rawGantt: Record<string, any[]> = {};
 
+        /** Return next day in yyyy-MM-dd form without timezone surprises. */
+        function addOneDay(dateStr: string): string {
+          const [y, m, d] = dateStr.split('-').map((n) => parseInt(n, 10));
+          const dt = new Date(y, m - 1, d + 1);
+          return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+        }
+
+        /**
+         * Split overnight/multi-day records (endHour > 24) into calendar-day
+         * segments. Used for gap and hourly-distribution calculations so a
+         * record running across midnight contributes the correct hours to each
+         * calendar day. Pieces are kept on the original record only.
+         */
+        function splitOvernightForTimeAnalysis(records: ParsedRecord[]): ParsedRecord[] {
+          const result: ParsedRecord[] = [];
+          for (const r of records) {
+            if (r.endHour <= 24) {
+              result.push(r);
+              continue;
+            }
+
+            let currentDate = r.date;
+            let currentStartHour = r.startHour;
+            let dayIndex = 0;
+            let remainingEndHour = r.endHour;
+
+            while (remainingEndHour > 24) {
+              const segmentEndHour = 24;
+              result.push({
+                ...r,
+                date: currentDate,
+                startTime: dayIndex === 0 ? r.startTime : '00:00',
+                startHour: currentStartHour,
+                endTime: '24:00',
+                endHour: segmentEndHour,
+                duration: Math.round((segmentEndHour - currentStartHour) * 60),
+                pieces: 0,
+              });
+
+              remainingEndHour -= 24;
+              currentDate = addOneDay(currentDate);
+              currentStartHour = 0;
+              dayIndex += 1;
+            }
+
+            // Last segment: midnight ~ actual end
+            result.push({
+              ...r,
+              date: currentDate,
+              startTime: '00:00',
+              startHour: 0,
+              endTime: r.endTime,
+              endHour: remainingEndHour,
+              duration: Math.round(remainingEndHour * 60),
+              pieces: 0,
+            });
+          }
+          return result;
+        }
+
         for (const eq of equipmentTypes) {
           const sheetName = Object.keys(allSheets).find(k => k === eq || k.toUpperCase().includes(eq)) || eq;
           const rows = allSheets[sheetName];
@@ -593,6 +653,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        // Split overnight records so gap/hourly calculations treat each calendar
+        // day independently. Original allRecords is still used for output/shift
+        // stats because pieces belong to the record's start date.
+        const allTimeSegments = splitOvernightForTimeAnalysis(allRecords);
+
         toast.loading(`已解析 ${allRecords.length} 条记录，正在计算指标...`, { id: toastId });
         await yieldToMain();
 
@@ -611,8 +676,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
             const totalTime = dayRecs.reduce((s, r) => s + r.duration, 0);
             const totalPieces = dayRecs.reduce((s, r) => s + r.pieces, 0);
 
-            // Calculate gaps
-            const sortedRecs = [...dayRecs].sort((a, b) => a.startHour - b.startHour);
+            // Calculate gaps from day-bound time segments (overnight records split)
+            const daySegments = allTimeSegments.filter(r => r.equipment === eq && r.date === date);
+            const sortedRecs = [...daySegments].sort((a, b) => a.startHour - b.startHour);
             let totalGap = 0;
             for (let i = 0; i < sortedRecs.length - 1; i++) {
               const gap = (sortedRecs[i + 1].startHour - sortedRecs[i].endHour) * 60;
@@ -639,6 +705,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         for (const eq of equipmentList) {
           const eqRecs = allRecords.filter(r => r.equipment === eq);
+          const eqTimeSegments = allTimeSegments.filter(r => r.equipment === eq);
 
           // Daily
           const daily: any[] = [];
@@ -649,6 +716,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
           for (const date of dates) {
             const dayRecs = eqRecs.filter(r => r.date === date);
+            const daySegments = eqTimeSegments.filter(r => r.date === date);
             if (dayRecs.length === 0) continue;
 
             const totalTime = dayRecs.reduce((s, r) => s + r.duration, 0);
@@ -673,10 +741,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
               }
             }
 
-            // Hourly distribution
+            // Hourly distribution (use day-bound segments so overnight runs
+            // don't spill hours past midnight into the wrong day)
             const hourly: Record<string, number> = {};
             for (let h = 0; h < 24; h++) hourly[String(h)] = 0;
-            for (const rec of dayRecs) {
+            for (const rec of daySegments) {
               const sH = Math.floor(rec.startHour);
               const eH = Math.floor(rec.endHour);
               for (let h = sH; h <= Math.min(eH, 23); h++) {
@@ -685,8 +754,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
             }
             hourlyDist[date] = hourly;
 
-            // Gaps
-            const sorted = [...dayRecs].sort((a, b) => a.startHour - b.startHour);
+            // Gaps (use day-bound segments so an overnight run ending at 01:00
+            // produces a gap from 01:00, not from 00:00)
+            const sorted = [...daySegments].sort((a, b) => a.startHour - b.startHour);
             const dayGaps: any[] = [];
             for (let i = 0; i < sorted.length - 1; i++) {
               const gapMin = (sorted[i + 1].startHour - sorted[i].endHour) * 60;
